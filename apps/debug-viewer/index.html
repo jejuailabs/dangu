@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>당구 물리 디버그 뷰어</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #14171a;
+        --panel: #1d2226;
+        --line: #2f373d;
+        --text: #e6e9eb;
+        --dim: #93a0a8;
+        --accent: #4fb3ff;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, "Malgun Gothic", sans-serif; }
+      .wrap { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+      @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+      canvas { width: 100%; height: auto; display: block; border-radius: 8px; background: #0d0f11; cursor: crosshair; }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+      .panel h2 { font-size: 13px; margin: 0 0 10px; color: var(--dim); font-weight: 600; }
+      .row { display: grid; grid-template-columns: 76px 1fr 56px; gap: 8px; align-items: center; margin-bottom: 8px; }
+      .row output { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+      input[type="range"] { width: 100%; }
+      button { background: var(--accent); color: #06121c; border: 0; border-radius: 6px; padding: 9px 12px; font-weight: 600; cursor: pointer; font-size: 14px; }
+      button.sub { background: transparent; color: var(--text); border: 1px solid var(--line); }
+      .btns { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+      pre { margin: 0; font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+      .tip { color: var(--dim); font-size: 12px; margin-top: 8px; }
+      .tippad { width: 120px; height: 120px; border-radius: 50%; background: #f1f1ea; margin: 4px auto 12px; position: relative; cursor: pointer; }
+      .tippad::before { content: ""; position: absolute; inset: 25%; border: 1px dashed #b33; border-radius: 50%; }
+      .tippad i { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: #1a6fd1; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div>
+        <canvas id="cv" width="1200" height="660"></canvas>
+        <p class="tip">테이블을 클릭하면 그 방향으로 조준합니다. 공을 드래그하면 위치를 옮깁니다. 점선은 현재 설정으로 쳤을 때의 예측 경로입니다.</p>
+      </div>
+      <div>
+        <div class="panel">
+          <h2>샷 입력</h2>
+          <div class="tippad" id="tippad" title="당점 (빨간 점선 = 미스큐 한계)"><i id="tipdot"></i></div>
+          <div class="row"><label for="phi">방향</label><input id="phi" type="range" min="-180" max="180" step="0.1" value="12" /><output id="phiO"></output></div>
+          <div class="row"><label for="theta">큐 고각</label><input id="theta" type="range" min="0" max="85" step="1" value="0" /><output id="thetaO"></output></div>
+          <div class="row"><label for="speed">큐 속도</label><input id="speed" type="range" min="0.2" max="8" step="0.1" value="3" /><output id="speedO"></output></div>
+          <div class="row"><label for="accel">가속도</label><input id="accel" type="range" min="-40" max="40" step="1" value="0" /><output id="accelO"></output></div>
+          <div class="row"><label for="rate">재생 속도</label><input id="rate" type="range" min="0.05" max="2" step="0.05" value="1" /><output id="rateO"></output></div>
+          <div class="row"><label for="tiltX">기울기 X</label><input id="tiltX" type="range" min="-3" max="3" step="0.05" value="0" /><output id="tiltXO"></output></div>
+          <div class="row"><label for="tiltY">기울기 Y</label><input id="tiltY" type="range" min="-3" max="3" step="0.05" value="0" /><output id="tiltYO"></output></div>
+          <div class="row"><label for="model">쿠션 모델</label><select id="model"><option value="mathavan">Mathavan 2010</option><option value="han">Han 2005 방식</option></select><span></span></div>
+          <div class="btns">
+            <button id="shoot">치기</button>
+            <button id="settle" class="sub">그냥 두기</button>
+            <button id="undo" class="sub">되돌리기</button>
+            <button id="reset" class="sub">초기 배치</button>
+          </div>
+        </div>
+        <div class="panel" style="margin-top: 12px">
+          <h2>결과</h2>
+          <pre id="info">-</pre>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

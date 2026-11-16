@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>당구 시뮬레이터</title>
+  </head>
+  <body>
+    <canvas id="cv"></canvas>
+
+    <!-- 메뉴 -->
+    <div id="menu">
+      <div id="profile"></div>
+      <div class="col">
+        <div class="logo">
+          <h1 data-t="당구"><span class="fill">당<b>구</b></span></h1>
+          <div><span class="ribbon">정밀 물리 3쿠션 · 4구</span></div>
+        </div>
+        <div class="modes">
+          <button class="pill yellow hide" id="resumeBtn">이어서 하기<small id="resumeInfo"></small></button>
+          <button class="mode-card pill green" data-mode="solo">혼자 치기<small>에버리지와 하이런에 도전</small></button>
+          <button class="mode-card pill blue" data-mode="ai">컴퓨터 대전<small>수지 50부터 프로까지</small></button>
+          <button class="mode-card pill pink" data-mode="online">온라인 대전<small>방 코드로 만나 실시간으로</small></button>
+          <button class="mode-card pill orange" data-mode="versus">2인 대전<small>한 화면에서 번갈아 치기</small></button>
+          <button class="mode-card pill purple" data-mode="practice">연습<small>공을 놓고 되돌려 가며 반복</small></button>
+        </div>
+      </div>
+
+      <div id="setup" class="glass hide">
+        <div class="eyebrow" id="setupEyebrow">경기 설정</div>
+        <h2 id="setupTitle">혼자 치기</h2>
+        <div class="field">
+          <span class="lbl">종목</span>
+          <div class="seg" id="segDisc">
+            <button data-v="3cushion" class="on">3쿠션</button>
+            <button data-v="4ball">4구</button>
+          </div>
+        </div>
+        <div class="field" id="aiField">
+          <span class="lbl">컴퓨터 수준</span>
+          <div class="levels" id="aiLevels"></div>
+        </div>
+        <div class="field" id="playersField">
+          <span class="lbl">선수와 목표 점수</span>
+          <div class="prow"><span class="balldot w"></span><input id="p0name" type="text" maxlength="10" value="플레이어 1" /><select id="p0target"></select></div>
+          <div class="prow" id="p1row"><span class="balldot y"></span><input id="p1name" type="text" maxlength="10" value="플레이어 2" /><select id="p1target"></select></div>
+        </div>
+        <div class="field" id="joinField">
+          <span class="lbl">받은 방 코드가 있으면</span>
+          <div class="joinrow"><input id="joinCode" type="text" maxlength="5" placeholder="방 코드 5자" autocomplete="off" /><button class="btn orange" id="joinBtn" type="button">참가</button></div>
+        </div>
+        <div class="field" id="clockField">
+          <label for="shotClock">샷 제한 시간</label>
+          <select id="shotClock">
+            <option value="0">없음</option>
+            <option value="40">40초</option>
+            <option value="30">30초</option>
+            <option value="20">20초</option>
+          </select>
+        </div>
+        <label class="chk" id="finishRow"><input type="checkbox" id="finish3c" /> 목표를 채운 뒤 3쿠션으로 마무리</label>
+        <div class="actions">
+          <button class="btn ghost" id="setupBack">뒤로</button>
+          <button class="btn green big" id="start">경기 시작</button>
+        </div>
+      </div>
+
+      <button class="mode-card round left" data-mode="shop"><i>🎱</i>큐 상점</button>
+      <button class="mode-card round right" data-mode="history"><i>📋</i>내 기록</button>
+      <div class="foot num" id="foot"></div>
+    </div>
+
+    <!-- 경기 화면 -->
+    <div id="hud" class="hide">
+      <div id="topbtns">
+        <button class="btn" id="btnPause" title="일시정지 (Esc)">☰ 메뉴</button>
+      </div>
+
+      <div id="board">
+        <div class="side active" data-p="0">
+          <span class="balldot w"></span>
+          <div class="who"><div class="name"></div><div class="sub num">AVG <b class="avg">0.000</b> · HR <b class="hr">0</b> · 목표 <b class="tgt">0</b></div></div>
+          <div class="pts num">0</div>
+        </div>
+        <div class="mid">
+          <div class="mode" id="bMode">3쿠션</div>
+          <div class="inn num">이닝 <b id="bInn">1</b></div>
+          <div class="run num">연속 <b id="bRun">0</b></div>
+          <div id="clock" class="hide"><i></i></div>
+        </div>
+        <div class="side" data-p="1">
+          <span class="balldot y"></span>
+          <div class="who"><div class="name"></div><div class="sub num">AVG <b class="avg">0.000</b> · HR <b class="hr">0</b> · 목표 <b class="tgt">0</b></div></div>
+          <div class="pts num">0</div>
+        </div>
+      </div>
+
+      <div id="netbar" class="hide">연결이 끊겼습니다. 다시 연결하는 중…</div>
+      <div id="thinking" class="hide">컴퓨터가 생각하는 중<i></i><i></i><i></i></div>
+      <div id="banner"><div class="main" id="bannerMain"></div><div class="sub" id="bannerSub"></div></div>
+
+      <div id="dock">
+        <section>
+          <div id="cueChip"></div>
+        </section>
+        <section>
+          <h3 class="eyebrow">시점</h3>
+          <div class="seg" id="segView">
+            <button data-v="aim" class="on">조준<kbd>1</kbd></button>
+            <button data-v="top">위<kbd>2</kbd></button>
+            <button data-v="free">자유<kbd>3</kbd></button>
+          </div>
+        </section>
+        <section>
+          <h3 class="eyebrow">당점</h3>
+          <div class="tipwrap">
+            <div id="tippad"><div id="tipdot"></div></div>
+            <div id="tipval"></div>
+          </div>
+          <div class="row"><label for="theta">큐 고각</label><input id="theta" type="range" min="0" max="85" step="1" value="0" /><output id="thetaO" class="num">0°</output></div>
+        </section>
+        <section>
+          <h3 class="eyebrow">치는 방식</h3>
+          <div class="seg" id="segInput">
+            <button data-v="stroke" class="on">스트로크</button>
+            <button data-v="gauge">게이지</button>
+            <button data-v="numeric">수치</button>
+          </div>
+          <div class="row"><label for="speed" id="speedLabel">예상 속도</label><input id="speed" type="range" min="0.2" max="8" step="0.1" value="2.5" /><output id="speedO" class="num"></output></div>
+          <div id="numeric" class="hide">
+            <div class="row two"><label for="nPhi">방향 °</label><input id="nPhi" type="number" step="0.1" /></div>
+            <div class="row two"><label for="nSide">좌우 당점</label><input id="nSide" type="number" step="0.05" min="-0.9" max="0.9" /></div>
+            <div class="row two"><label for="nTop">상하 당점</label><input id="nTop" type="number" step="0.05" min="-0.9" max="0.9" /></div>
+            <div class="row two"><label for="nAccel">가속도</label><input id="nAccel" type="number" step="1" value="0" /></div>
+          </div>
+          <button class="btn green hide" id="shoot">치기 · Enter</button>
+        </section>
+        <section>
+          <h3 class="eyebrow">보조</h3>
+          <div class="row two"><label for="assist">예측선</label>
+            <select id="assist">
+              <option value="none">없음</option>
+              <option value="aim">조준선만</option>
+              <option value="first">첫 충돌까지</option>
+              <option value="full" selected>전체 경로</option>
+            </select>
+          </div>
+          <div class="row"><label for="sens">감도</label><input id="sens" type="range" min="0.2" max="1.5" step="0.05" value="0.6" /><output id="sensO" class="num"></output></div>
+          <label class="chk"><input type="checkbox" id="sound" checked /> 효과음</label>
+        </section>
+        <section>
+          <div class="btnrow">
+            <button class="btn" id="btnReplay" title="방금 친 샷 다시 보기 (R)">↺ 다시 보기</button>
+            <button class="btn" id="btnUndo" title="연습 모드에서 한 샷 되돌리기 (Z)">⤺ 되돌리기</button>
+          </div>
+        </section>
+      </div>
+
+      <div id="shotcard" class="glass"></div>
+      <div id="keys"></div>
+      <div id="strokepad" class="glass"><div class="track"></div><div id="strokebar"></div><span>▲ 밀기</span><span>▼ 당기기</span></div>
+    </div>
+
+    <!-- 다시 보기 조작 -->
+    <div id="replaybar" class="glass hide">
+      <div class="top">
+        <span class="tag">REPLAY</span>
+        <span id="rpLabel"></span>
+        <button class="btn" id="rpPractice" title="이 배치에서 다시 쳐보기">이 배치로 연습</button>
+        <button class="btn" id="rpClose">닫기</button>
+      </div>
+      <div class="ctl">
+        <button class="btn" id="rpPrev" title="이전 샷">⏮</button>
+        <button class="btn yellow" id="rpPlay">⏸</button>
+        <button class="btn" id="rpNext" title="다음 샷">⏭</button>
+        <input id="rpSeek" type="range" min="0" max="1000" value="0" />
+        <div class="seg" id="rpSpeed">
+          <button data-v="0.1">0.1×</button>
+          <button data-v="0.25">¼×</button>
+          <button data-v="0.5">½×</button>
+          <button data-v="1" class="on">1×</button>
+          <button data-v="2">2×</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 경기 결과 -->
+    <div id="result" class="overlay hide">
+      <div class="sheet glass">
+        <div class="eyebrow" id="resEyebrow">경기 종료</div>
+        <h2 id="resTitle"></h2>
+        <div class="lead" id="resLead"></div>
+        <div class="vs" id="resCards"></div>
+        <div id="resReward"></div>
+        <div class="eyebrow" style="margin-bottom: 6px">기록지</div>
+        <div class="sheetwrap"><table class="rec num" id="resSheet"></table></div>
+        <div class="actions">
+          <button class="btn" id="resReplay">▶ 경기 다시 보기</button>
+          <button class="btn" id="resMenu">메뉴로</button>
+          <button class="btn green" id="resAgain">한 판 더</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 지난 경기 -->
+    <div id="history" class="overlay hide">
+      <div class="sheet glass">
+        <div class="eyebrow">기록</div>
+        <h2>내 <em>기록</em></h2>
+        <div class="lead">이 브라우저에 저장된 최근 경기입니다. 영상이 아니라 샷 입력을 저장해 다시 계산합니다.</div>
+        <div class="seg" id="segHist" style="max-width: 300px; margin-bottom: 12px">
+          <button data-v="all" class="on">전체</button>
+          <button data-v="3cushion">3쿠션</button>
+          <button data-v="4ball">4구</button>
+        </div>
+        <div id="histStats"></div>
+        <div class="eyebrow" style="margin: 14px 0 6px">지난 경기</div>
+        <div id="histList"></div>
+        <div class="actions"><button class="btn" id="histClose">닫기</button></div>
+      </div>
+    </div>
+
+    <!-- 큐 상점 -->
+    <div id="shop" class="overlay hide">
+      <div class="sheet glass wide">
+        <div class="shophead">
+          <div>
+            <div class="eyebrow">큐 상점</div>
+            <h2>내 <em>큐</em></h2>
+          </div>
+          <div class="wallet" id="shopWallet"></div>
+        </div>
+        <div class="lead">경기에서 득점하면 경험치와 코인을 얻습니다. 다마수가 오르면 더 좋은 큐가 열립니다.</div>
+        <div class="cues" id="shopList"></div>
+        <div class="actions"><button class="btn" id="shopClose">닫기</button></div>
+      </div>
+    </div>
+
+    <!-- 로그인 / 가입 -->
+    <div id="account" class="overlay hide">
+      <div class="sheet small glass">
+        <div class="eyebrow">계정</div>
+        <h2 id="acctTitle">로그인</h2>
+        <div class="lead" id="acctLead">로그인하면 기록과 큐가 서버에 저장되어 다른 기기에서도 이어집니다.</div>
+        <div class="seg" id="segAcct" style="margin-bottom: 12px">
+          <button data-v="login" class="on">로그인</button>
+          <button data-v="signup">새로 가입</button>
+        </div>
+        <form id="acctForm" autocomplete="on">
+          <div class="field"><input id="acctName" type="text" maxlength="12" placeholder="아이디 (2~12자)" autocomplete="username" /></div>
+          <div class="field"><input id="acctPass" type="password" maxlength="100" placeholder="비밀번호 (6자 이상)" autocomplete="current-password" /></div>
+          <div id="acctMsg"></div>
+          <div class="actions">
+            <button class="btn green" type="submit" id="acctSubmit">로그인</button>
+            <button class="btn ghost" type="button" id="acctClose">닫기</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 온라인 대기실 -->
+    <div id="lobby" class="overlay hide">
+      <div class="sheet small glass">
+        <div class="eyebrow">온라인 대전</div>
+        <h2>상대를 <em>기다리는 중</em></h2>
+        <div class="lead">아래 코드나 링크를 상대에게 알려 주세요.</div>
+        <div class="roomcode num" id="lobbyCode">-----</div>
+        <div id="lobbyMsg"></div>
+        <div class="actions">
+          <button class="btn yellow" id="lobbyCopy">초대 링크 복사</button>
+          <button class="btn ghost" id="lobbyCancel">취소</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 일시정지 -->
+    <div id="pause" class="overlay hide">
+      <div class="sheet small glass">
+        <div class="eyebrow">일시정지</div>
+        <h2>잠깐 멈춤</h2>
+        <div class="actions">
+          <button class="btn green" id="pauseResume">계속하기</button>
+          <button class="btn" id="pauseRestart">처음부터 다시</button>
+          <button class="btn" id="pauseMenu">메뉴로 나가기</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
