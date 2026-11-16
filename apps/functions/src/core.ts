@@ -363,7 +363,7 @@ export class Core {
     }
   }
 
-  async roomShot(id: Identity, codeRaw: unknown, raw: { input?: unknown; stroke?: unknown; have?: unknown }): Promise<RoomView> {
+  async roomShot(id: Identity, codeRaw: unknown, raw: { input?: unknown; stroke?: unknown; have?: unknown; chalked?: unknown }): Promise<RoomView> {
     const code = typeof codeRaw === 'string' ? codeRaw.trim().toUpperCase() : ''
     const have = num(raw.have, 0, MAX_SHOTS, 0)
     const room = await this.mutate(code, (r) => {
@@ -384,7 +384,7 @@ export class Core {
         }
       }
       r.seats[seat].seenAt = this.now()
-      this.apply(r, { player: seat, input, stroke })
+      this.apply(r, { player: seat, input, stroke, chalked: raw.chalked === true })
       return true
     })
     return this.view(room, id.uid, have, await this.overProfile(room, id))

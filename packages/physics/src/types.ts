@@ -117,6 +117,11 @@ export interface ShotInput {
   /** 임팩트 순간 큐 가속도 (m/s^2). 가속 중이면 양수, 감속 중이면 음수 */
   accel?: number
   cue: CueSpec
+  /**
+   * 미스큐 여부를 바깥에서 정해 준다 (초크 상태와 확률로 정한 결과).
+   * 없으면 당점이 큐의 한계를 넘었는지로만 판단한다.
+   */
+  miscue?: boolean
 }
 
 export type EventType = 'strike' | 'ball-ball' | 'cushion' | 'transition' | 'out'

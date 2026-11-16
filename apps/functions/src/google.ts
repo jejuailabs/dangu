@@ -16,7 +16,7 @@ export interface ServiceAccount {
 export function serviceAccountFromEnv(env: Record<string, string | undefined> = process.env): ServiceAccount {
   const projectId = env.FIREBASE_PROJECT_ID?.trim()
   const clientEmail = env.FIREBASE_CLIENT_EMAIL?.trim()
-  const privateKey = env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  const privateKey = env.FIREBASE_PRIVATE_KEY?.trim().replace(/\\n/g, '\n')
   if (!projectId || !clientEmail || !privateKey) throw new Error('FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY 환경변수가 필요합니다')
   return { projectId, clientEmail, privateKey }
 }

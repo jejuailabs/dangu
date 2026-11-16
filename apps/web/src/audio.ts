@@ -46,6 +46,11 @@ export function playBallHit(speed: number): void {
 export function playCushion(speed: number): void {
   burst(260, 1.2, 0.09, Math.min(speed / 4, 1) * 0.7)
 }
+/** 초크 칠하는 소리 */
+export function playChalk(): void {
+  burst(2600, 2, 0.09, 0.22)
+  window.setTimeout(() => burst(3100, 2, 0.08, 0.2), 130)
+}
 export function playStrike(speed: number, miscue: boolean): void {
   if (miscue) burst(4200, 6, 0.05, 0.5)
   else burst(1300, 2, 0.025, Math.min(speed / 5, 1) * 0.8)

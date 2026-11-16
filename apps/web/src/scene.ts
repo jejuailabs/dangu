@@ -46,6 +46,8 @@ export class TableScene {
   attract = false
   private attractAngle = 0.6
   private insets = { right: 0, top: 0, bottom: 0 }
+  /** 조준 시점에서 사용자가 조절한 값: 좌우로 돈 각(rad), 높이(m), 거리 배율 */
+  readonly adj = { yaw: 0, lift: 0, zoom: 1 }
   private camPos = new THREE.Vector3(0, 2, 2)
   private camLook = new THREE.Vector3()
   private raycaster = new THREE.Raycaster()
@@ -353,10 +355,28 @@ export class TableScene {
   aimCamera(ball: BallState, phi: number, theta: number): void {
     const back = 0.95
     // 고각이 클수록 위에서 내려다본다
-    const lift = 0.36 + 0.9 * Math.sin(theta)
-    const pull = back * (1 - 0.55 * Math.sin(theta))
-    this.camPos.copy(this.toThree(ball.r[0] - Math.cos(phi) * pull, ball.r[1] - Math.sin(phi) * pull, lift))
-    this.camLook.copy(this.toThree(ball.r[0] + Math.cos(phi) * 0.55, ball.r[1] + Math.sin(phi) * 0.55, 0.02))
+    const a = phi + this.adj.yaw
+    const z = this.adj.zoom
+    const lift = Math.min(Math.max((0.36 + 0.9 * Math.sin(theta)) * z + this.adj.lift, 0.09), 3.2)
+    const pull = back * (1 - 0.55 * Math.sin(theta)) * z
+    this.camPos.copy(this.toThree(ball.r[0] - Math.cos(a) * pull, ball.r[1] - Math.sin(a) * pull, lift))
+    this.camLook.copy(this.toThree(ball.r[0] + Math.cos(a) * 0.55, ball.r[1] + Math.sin(a) * 0.55, 0.02))
+  }
+
+  /** 조준 시점을 돌리고(yaw), 올리고(lift), 당기거나 민다(zoom 배율). */
+  adjustView(dyaw: number, dlift: number, zoomMul: number): void {
+    let y = this.adj.yaw + dyaw
+    while (y > Math.PI) y -= 2 * Math.PI
+    while (y < -Math.PI) y += 2 * Math.PI
+    this.adj.yaw = y
+    this.adj.lift = Math.min(Math.max(this.adj.lift + dlift, -0.25), 1.8)
+    this.adj.zoom = Math.min(Math.max(this.adj.zoom * zoomMul, 0.45), 2.6)
+  }
+
+  resetView(): void {
+    this.adj.yaw = 0
+    this.adj.lift = 0
+    this.adj.zoom = 1
   }
 
   setView(v: ViewMode): void {

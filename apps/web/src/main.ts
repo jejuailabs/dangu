@@ -16,7 +16,8 @@ import {
   simulate,
   stateAt,
 } from '../../../packages/physics/src'
-import { DEFAULT_RULES, type Discipline, average, tableFor } from '../../../packages/rules/src'
+import { DEFAULT_RULES, type Discipline, RED_A, RED_B, average, tableFor } from '../../../packages/rules/src'
+import { chalkOf, miscueChance } from '../../../packages/game/src'
 import {
   type MatchConfig,
   type MatchRecord,
@@ -44,7 +45,7 @@ import {
   equippedCue,
   levelOf,
 } from '../../../packages/game/src/progress'
-import { playBallHit, playCushion, playStrike, setSoundEnabled } from './audio'
+import { playBallHit, playCushion, playChalk, playStrike, setSoundEnabled } from './audio'
 import { clearElevation } from './cueGeometry'
 import { TableScene, type ViewMode } from './scene'
 import { clearCurrent, deleteMatch, loadCurrent, loadMatches, loadProfile, saveCurrent, saveMatch, saveProfile } from './store'
@@ -104,6 +105,10 @@ let side = 0
 let top = 0
 let gaugeSpeed = 2.5
 let numericAccel = 0
+/** 이번 샷을 치기 전에 초크를 칠했는가 */
+let chalkedNow = false
+/** 자동 조준이 지금 겨누고 있는 공 */
+let aimTarget = -1
 
 let pending: { state: MatchState; outcome: ShotOutcome } | null = null
 let result: ShotResult | null = null
@@ -321,6 +326,8 @@ function startMatch(kind: Kind, config: MatchConfig, startBalls?: BallState[], r
   thetaUser = 0
   side = 0
   top = 0
+  chalkedNow = false
+  scene.resetView()
   show('menu', false)
   show('result', false)
   show('pause', false)
@@ -332,7 +339,7 @@ function startMatch(kind: Kind, config: MatchConfig, startBalls?: BallState[], r
   scene.resetSpin()
   scene.setBalls(balls())
   applyCue()
-  aimAtNearest()
+  autoAim()
   resetClock()
   $('board').classList.toggle('solo', config.players.length === 1)
   show('btnUndo', kind === 'practice')
@@ -357,19 +364,65 @@ function applyCue(): void {
   const th = $<HTMLInputElement>('theta')
   th.max = String(c.maxElevation)
   thetaUser = Math.min(thetaUser, c.maxElevation)
-  $('tippad').style.setProperty('--lim', `${50 - c.spec.miscueLimit * 50}%`)
   const lv = levelOf(profile.xp)
   $('cueChip').innerHTML = `<div><div class="t">${esc(c.name)}</div><div class="d num">최대 ${c.maxSpeed.toFixed(1)} m/s · 고각 ${c.maxElevation}° · 회전 ${c.spec.miscueLimit.toFixed(2)}</div></div><span class="lv num">다마 ${lv.damasu}</span>`
 }
 
-function aimAtNearest(): void {
+/** 겨눌 만한 공을 좋은 순서로 늘어놓는다: 길이 막히지 않은 공 먼저, 그 안에서는 가까운 순 */
+function aimCandidates(): BallState[] {
   const c = cueBall()
-  let best: BallState | null = null
-  for (const b of balls()) {
-    if (b.id === c.id || b.s === 'out') continue
-    if (!best || Math.hypot(b.r[0] - c.r[0], b.r[1] - c.r[1]) < Math.hypot(best.r[0] - c.r[0], best.r[1] - c.r[1])) best = b
+  const R = table().R
+  const others = balls().filter((b) => b.id !== c.id && b.s !== 'out')
+  const reds = others.filter((b) => b.id === RED_A || b.id === RED_B)
+  // 4구는 빨간 공을 맞혀야 하고, 3쿠션도 초구는 빨간 공부터 맞힌다
+  const redFirst = session!.record.config.discipline === '4ball' || session!.record.shots.length === 0
+  const dist = (b: BallState) => Math.hypot(b.r[0] - c.r[0], b.r[1] - c.r[1])
+  const blocked = (b: BallState) => {
+    const d = dist(b)
+    const ux = (b.r[0] - c.r[0]) / d
+    const uy = (b.r[1] - c.r[1]) / d
+    return others.some((o) => {
+      if (o === b) return false
+      const s = (o.r[0] - c.r[0]) * ux + (o.r[1] - c.r[1]) * uy
+      return s > 0 && s < d && Math.abs((o.r[0] - c.r[0]) * uy - (o.r[1] - c.r[1]) * ux) < 2 * R
+    })
   }
-  if (best) phi = Math.atan2(best.r[1] - c.r[1], best.r[0] - c.r[0])
+  const rank = (b: BallState) => (redFirst && !reds.includes(b) ? 100 : 0) + (blocked(b) ? 10 : 0) + dist(b) / 10
+  return [...others].sort((a, b) => rank(a) - rank(b))
+}
+
+function aimAt(b: BallState): void {
+  const c = cueBall()
+  aimTarget = b.id
+  phi = Math.atan2(b.r[1] - c.r[1], b.r[0] - c.r[0])
+}
+
+/** 차례가 시작될 때 칠 공을 자동으로 겨눈다. */
+function autoAim(): void {
+  const list = aimCandidates()
+  if (list.length) aimAt(list[0])
+}
+
+/** 다음 공으로 조준을 옮긴다 (단축키 T) */
+function cycleTarget(): void {
+  const list = aimCandidates()
+  if (!list.length) return
+  const i = list.findIndex((b) => b.id === aimTarget)
+  aimAt(list[(i + 1) % list.length])
+}
+
+function doChalk(): void {
+  if (!session || phase !== 'aim' || paused || chalkedNow) return
+  chalkedNow = true
+  playChalk()
+  syncControls()
+  refreshAim()
+}
+
+/** 지금 당점에서의 미스큐 확률 */
+function miscueNow(): number {
+  if (!session) return 0
+  return miscueChance(Math.hypot(side, top), cueItem().spec.miscueLimit, chalkOf(session.state, chalkedNow))
 }
 
 function resetClock(): void {
@@ -554,7 +607,7 @@ function syncOnline(m: Extract<ServerMsg, { t: 'room' }>): void {
     return
   }
   phase = 'aim'
-  aimAtNearest()
+  autoAim()
   resetClock()
   nextTurn()
 }
@@ -596,7 +649,7 @@ function drainNet(): void {
     }
     banner('foul', '시간 초과', `다음 ${who[session.state.turn].name}`)
     phase = 'aim'
-    aimAtNearest()
+    autoAim()
     resetClock()
     nextTurn()
   }
@@ -694,11 +747,12 @@ function fire(shot: ShotInput, analysis: StrokeAnalysis | null): void {
     phase = 'think'
     setThinking('보내는 중')
     scene.setPrediction([])
-    void net.shot(shot, meta)
+    void net.shot(shot, meta, chalkedNow)
     updateKeys()
     return
   }
-  commitShot({ player: session.state.turn, input: shot, stroke: meta })
+  // 컴퓨터는 매번 초크를 칠한다
+  commitShot({ player: session.state.turn, input: shot, stroke: meta, chalked: isAiTurn() || chalkedNow })
 }
 
 /** 확정된 샷을 경기에 적용하고 공이 구르는 화면으로 넘어간다. */
@@ -747,7 +801,8 @@ function finishShot(): void {
   else banner('bad', '실패', j.reason + (turnChanged ? ` · 다음 ${who[session.state.turn].name}` : ''))
 
   phase = 'aim'
-  if (turnChanged) aimAtNearest()
+  chalkedNow = false
+  autoAim()
   resetClock()
   nextTurn()
   drainNet()
@@ -762,7 +817,8 @@ function timeUp(): void {
   persist()
   banner('foul', '시간 초과', `다음 ${session.record.config.players[session.state.turn].name}`)
   renderBoard()
-  aimAtNearest()
+  chalkedNow = false
+  autoAim()
   resetClock()
   nextTurn()
 }
@@ -811,14 +867,17 @@ function undo(): void {
   session.state = practiceUndo.pop()!
   session.record.shots.pop()
   session.outcomes.pop()
+  chalkedNow = false
   scene.setBalls(balls())
+  syncControls()
   refreshAim()
 }
 
 // ── 조준 화면 ─────────────────────────────────────────
 function predictionPaths(): [number, number][][] {
   if (assist === 'none' || assist === 'aim') return []
-  const res = simulate(table(), balls(), shotInput())
+  // 예측선은 미스큐가 확실할 때만 미스큐로 그린다
+  const res = simulate(table(), balls(), shotInput({ miscue: miscueNow() >= 1 }))
   let tEnd = res.duration
   if (assist === 'first') {
     const cueId = cueIdOf(session!.state.turn)
@@ -981,8 +1040,8 @@ function updateKeys(): void {
   else if (phase === 'think') el.textContent = '컴퓨터 차례입니다'
   else if (phase === 'stroke') el.innerHTML = `마우스를 아래로 당겼다가 위로 밀어 칩니다 · 손을 떼면 취소`
   else if (phase === 'over') el.textContent = '경기가 끝났습니다'
-  else if (inputMode === 'stroke') el.innerHTML = `조준 드래그·${k('A')}${k('D')} · 고각 ${k('W')}${k('S')} · ${k('Space')} 누른 채 당겼다 밀기 · 다시 보기 ${k('R')}`
-  else el.innerHTML = `조준 드래그·${k('A')}${k('D')} · 고각 ${k('W')}${k('S')} · 치기 ${k('Enter')} · 다시 보기 ${k('R')}`
+  else if (inputMode === 'stroke') el.innerHTML = `조준 ${k('A')}${k('D')} · 다음 공 ${k('T')} · 초크 ${k('C')} · ${k('Space')} 누른 채 당겼다 밀기 · 단축키 ${k('H')}`
+  else el.innerHTML = `조준 ${k('A')}${k('D')} · 다음 공 ${k('T')} · 초크 ${k('C')} · 치기 ${k('Enter')} · 단축키 ${k('H')}`
 }
 
 function syncControls(): void {
@@ -998,8 +1057,19 @@ function syncControls(): void {
   const parts: string[] = []
   if (Math.abs(side) >= 0.03) parts.push(`${side > 0 ? '오른쪽' : '왼쪽'} ${Math.abs(side).toFixed(2)}`)
   if (Math.abs(top) >= 0.03) parts.push(`${top > 0 ? '위' : '아래'} ${Math.abs(top).toFixed(2)}`)
-  const risky = off > c.spec.miscueLimit
-  $('tipval').innerHTML = `<b style="${risky ? 'color:var(--bad)' : ''}">${risky ? '미스큐 위험' : parts.length ? parts.join(' · ') : '중심'}</b>${risky ? parts.join(' · ') : `점선 = 이 큐의 한계 ${c.spec.miscueLimit.toFixed(2)}`}`
+  const chalk = session ? chalkOf(session.state, chalkedNow) : 1
+  const safe = c.spec.miscueLimit * (0.82 + 0.18 * chalk)
+  const chance = miscueChance(off, c.spec.miscueLimit, chalk)
+  const risky = chance > 0
+  $('tippad').style.setProperty('--lim', `${50 - safe * 50}%`)
+  $('tipval').innerHTML = `<b style="${risky ? 'color:var(--bad)' : ''}">${risky ? `미스큐 ${Math.max(1, Math.round(chance * 100))}%` : parts.length ? parts.join(' · ') : '중심'}</b>${risky ? parts.join(' · ') : `점선 = 지금 안전한 범위 ${safe.toFixed(2)}`}`
+  $('chalkFill').style.width = `${Math.round(chalk * 100)}%`
+  $('chalkFill').classList.toggle('low', chalk < 0.4)
+  $<HTMLButtonElement>('btnChalk').disabled = chalkedNow || chalk >= 0.999
+  $<HTMLInputElement>('camLift').value = String(scene.adj.lift)
+  $<HTMLInputElement>('camZoom').value = String(scene.adj.zoom)
+  $('camLiftO').textContent = `${scene.adj.lift >= 0 ? '+' : ''}${Math.round(scene.adj.lift * 100)}cm`
+  $('camZoomO').textContent = `×${scene.adj.zoom.toFixed(2)}`
   show('shoot', inputMode !== 'stroke')
   show('numeric', inputMode === 'numeric')
   show('strokepad', inputMode === 'stroke' && phase !== 'replay')
@@ -1639,22 +1709,43 @@ pad.addEventListener('pointermove', (ev) => {
 })
 
 // 테이블 위 포인터: 조준 드래그, 연습 모드의 공 옮기기
-let drag: { kind: 'aim' | 'ball'; id?: number; x: number; moved: number } | null = null
+let drag: { kind: 'aim' | 'ball' | 'view'; id?: number; x: number; y: number; moved: number } | null = null
+/** 조준 시점을 조절한 뒤 화면에 반영한다 */
+function viewChanged(): void {
+  if (!session) return
+  if (phase === 'aim' || phase === 'stroke') refreshAim()
+  syncControls()
+}
+canvas.addEventListener('contextmenu', (ev) => ev.preventDefault())
 canvas.addEventListener('pointerdown', (ev) => {
+  if (session && !paused && scene.view === 'aim' && ev.button === 2 && (phase === 'aim' || phase === 'think')) {
+    // 오른쪽 버튼 드래그: 시점을 돌리고 높인다
+    drag = { kind: 'view', x: ev.clientX, y: ev.clientY, moved: 0 }
+    capture(canvas, ev.pointerId)
+    return
+  }
+  if (ev.button !== 0) return
   if (!session || phase !== 'aim' || paused || scene.view === 'free') return
   const pos = scene.pick(ev.clientX, ev.clientY)
   if (session.kind === 'practice' && pos) {
     const hit = balls().find((b) => Math.hypot(b.r[0] - pos[0], b.r[1] - pos[1]) < table().R * 1.4)
     if (hit) {
-      drag = { kind: 'ball', id: hit.id, x: ev.clientX, moved: 0 }
+      drag = { kind: 'ball', id: hit.id, x: ev.clientX, y: ev.clientY, moved: 0 }
       capture(canvas, ev.pointerId)
       return
     }
   }
-  drag = { kind: 'aim', x: ev.clientX, moved: 0 }
+  drag = { kind: 'aim', x: ev.clientX, y: ev.clientY, moved: 0 }
   capture(canvas, ev.pointerId)
 })
 canvas.addEventListener('pointermove', (ev) => {
+  if (drag?.kind === 'view') {
+    scene.adjustView(-(ev.clientX - drag.x) * 0.006, (ev.clientY - drag.y) * 0.004, 1)
+    drag.x = ev.clientX
+    drag.y = ev.clientY
+    viewChanged()
+    return
+  }
   if (!drag || !session || phase !== 'aim') return
   const dx = ev.clientX - drag.x
   drag.x = ev.clientX
@@ -1700,7 +1791,15 @@ canvas.addEventListener('pointerup', (ev) => {
 canvas.addEventListener(
   'wheel',
   (ev) => {
-    if (phase !== 'aim' || scene.view === 'free' || paused) return
+    if (scene.view === 'free' || paused || !session) return
+    if (ev.ctrlKey && scene.view === 'aim') {
+      // Ctrl + 휠: 시점을 당기거나 민다
+      ev.preventDefault()
+      scene.adjustView(0, 0, ev.deltaY > 0 ? 1.08 : 1 / 1.08)
+      viewChanged()
+      return
+    }
+    if (phase !== 'aim') return
     ev.preventDefault()
     phi -= Math.sign(ev.deltaY) * (ev.shiftKey ? 0.0005 : 0.003)
     syncControls()
@@ -1747,15 +1846,116 @@ window.addEventListener('keydown', (ev) => {
   const el = ev.target as HTMLElement
   if ((el.tagName === 'INPUT' && ['number', 'text', 'password'].includes((el as HTMLInputElement).type)) || el.tagName === 'SELECT') return
   if (ev.code === 'Escape') {
-    if (replay) closeReplay()
+    if (!$('help').classList.contains('hide')) show('help', false)
+    else if (replay) closeReplay()
     else if (!$('shop').classList.contains('hide')) show('shop', false)
     else if (!$('history').classList.contains('hide')) show('history', false)
     else if (session) setPaused(!paused)
     return
   }
-  if (!session || paused) return
+  if (ev.code === 'KeyH' || (ev.code === 'Slash' && ev.shiftKey)) {
+    toggleHelp()
+    return
+  }
+  if (!session || paused || ev.ctrlKey || ev.metaKey || ev.altKey) return
   const fine = ev.shiftKey ? 0.1 : 1
+  const aiming = phase === 'aim'
+  const tipStep = ev.shiftKey ? 0.01 : 0.05
+  const moveTip = (dx: number, dy: number) => {
+    if (!aiming) return
+    let sx = side + dx
+    let sy = top + dy
+    const l = Math.hypot(sx, sy)
+    if (l > 0.85) {
+      sx *= 0.85 / l
+      sy *= 0.85 / l
+    }
+    side = Math.round(sx * 100) / 100
+    top = Math.round(sy * 100) / 100
+  }
   switch (ev.code) {
+    case 'KeyC':
+      doChalk()
+      break
+    case 'KeyT':
+    case 'Tab':
+      if (aiming) cycleTarget()
+      break
+    case 'KeyV':
+      setView(scene.view === 'aim' ? 'top' : scene.view === 'top' ? 'free' : phase === 'replay' ? 'top' : 'aim')
+      break
+    case 'KeyQ':
+      scene.adjustView(0.08 * fine, 0, 1)
+      viewChanged()
+      break
+    case 'KeyE':
+      scene.adjustView(-0.08 * fine, 0, 1)
+      viewChanged()
+      break
+    case 'PageUp':
+      scene.adjustView(0, 0.06, 1)
+      viewChanged()
+      break
+    case 'PageDown':
+      scene.adjustView(0, -0.06, 1)
+      viewChanged()
+      break
+    case 'Equal':
+    case 'NumpadAdd':
+      scene.adjustView(0, 0, 1 / 1.1)
+      viewChanged()
+      break
+    case 'Minus':
+    case 'NumpadSubtract':
+      scene.adjustView(0, 0, 1.1)
+      viewChanged()
+      break
+    case 'Digit0':
+    case 'Home':
+      scene.resetView()
+      viewChanged()
+      break
+    case 'KeyJ':
+      moveTip(-tipStep, 0)
+      break
+    case 'KeyL':
+      moveTip(tipStep, 0)
+      break
+    case 'KeyI':
+      moveTip(0, tipStep)
+      break
+    case 'KeyK':
+      moveTip(0, -tipStep)
+      break
+    case 'KeyX':
+      if (aiming) side = top = 0
+      break
+    case 'BracketLeft':
+      if (aiming) gaugeSpeed = clamp(Math.round((gaugeSpeed - (ev.shiftKey ? 0.1 : 0.3)) * 10) / 10, 0.2, cueItem().maxSpeed)
+      break
+    case 'BracketRight':
+      if (aiming) gaugeSpeed = clamp(Math.round((gaugeSpeed + (ev.shiftKey ? 0.1 : 0.3)) * 10) / 10, 0.2, cueItem().maxSpeed)
+      break
+    case 'KeyG': {
+      if (!aiming) break
+      const order: InputMode[] = ['stroke', 'gauge', 'numeric']
+      inputMode = order[(order.indexOf(inputMode) + 1) % order.length]
+      setSeg('segInput', inputMode)
+      updateKeys()
+      break
+    }
+    case 'KeyF': {
+      const order: Assist[] = ['none', 'aim', 'first', 'full']
+      assist = order[(order.indexOf(assist) + 1) % order.length]
+      $<HTMLSelectElement>('assist').value = assist
+      break
+    }
+    case 'KeyM': {
+      const box = $<HTMLInputElement>('sound')
+      box.checked = !box.checked
+      setSoundEnabled(box.checked)
+      break
+    }
     case 'Digit1':
       if (phase !== 'replay') setView('aim')
       break
@@ -1814,6 +2014,40 @@ window.addEventListener('keyup', (ev) => {
   if (ev.code === 'Space' && strokeSource === 'key') cancelStroke()
 })
 window.addEventListener('resize', layout)
+
+// 초크, 시점 조절, 단축키 안내
+$('btnChalk').addEventListener('click', doChalk)
+$('camLift').addEventListener('input', (e) => {
+  scene.adj.lift = Number((e.target as HTMLInputElement).value)
+  viewChanged()
+})
+$('camZoom').addEventListener('input', (e) => {
+  scene.adj.zoom = Number((e.target as HTMLInputElement).value)
+  viewChanged()
+})
+$('camReset').addEventListener('click', () => {
+  scene.resetView()
+  viewChanged()
+})
+const HELP: [string, [string, string][]][] = [
+  ['조준', [['좌우로 돌리기 (Shift: 미세하게)', 'A D / ← →'], ['다음 공으로 조준 옮기기', 'T / Tab'], ['큐 고각 올리기·내리기', 'W S / ↑ ↓']]],
+  ['당점과 세기', [['당점 옮기기 (Shift: 미세하게)', 'I J K L'], ['당점 가운데로', 'X'], ['세기 줄이기·늘리기', '[ ]'], ['초크 칠하기', 'C']]],
+  ['치기', [['스트로크: 누른 채 마우스를 당겼다 밀기', 'Space'], ['게이지·수치: 치기', 'Enter'], ['치는 방식 바꾸기', 'G']]],
+  ['시점', [['조준 / 위 / 자유', '1 2 3'], ['시점 차례로 바꾸기', 'V'], ['시점 좌우로 돌리기', 'Q E'], ['시점 높이기·낮추기', 'PgUp PgDn'], ['가까이·멀리', '+ −'], ['시점 처음으로', '0'], ['마우스: 오른쪽 버튼 드래그, Ctrl + 휠', '']]],
+  ['그 밖에', [['방금 샷 다시 보기', 'R'], ['되돌리기 (연습)', 'Z'], ['예측선 바꾸기', 'F'], ['효과음 켜기·끄기', 'M'], ['일시정지', 'Esc'], ['이 안내 열기·닫기', 'H']]],
+]
+$('helpList').innerHTML = HELP.map(
+  ([title, rows]) =>
+    `<h4>${title}</h4>` +
+    rows
+      .map(([what, keys]) => `<div><span>${what}</span><span>${keys ? keys.split(' ').map((x) => (x === '/' ? '/' : `<kbd>${x}</kbd>`)).join('') : ''}</span></div>`)
+      .join(''),
+).join('')
+function toggleHelp(): void {
+  show('help', $('help').classList.contains('hide'))
+}
+$('btnHelp').addEventListener('click', toggleHelp)
+$('helpClose').addEventListener('click', () => show('help', false))
 
 // ── 매 프레임 ─────────────────────────────────────────
 /** 자동 점검용: 주소에 norender 가 있으면 3D 화면을 그리지 않는다 (점검용 브라우저는 그래픽 가속이 없어 매우 느리다) */

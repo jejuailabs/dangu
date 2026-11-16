@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_CUE, DEG, type ShotInput } from '../../physics/src'
 import { DEFAULT_RULES } from '../../rules/src'
-import { type MatchConfig, type ShotRecord, cueIdOf, initialState, newMatch, play, rebuild, summarize } from '../src'
+import { type MatchConfig, type ShotRecord, cueIdOf, initialState, miscueChance, newMatch, play, rebuild, summarize } from '../src'
 
 const shot = (deg: number, speed = 3, side = 0): ShotRecord => ({
   player: 0,
@@ -126,5 +126,65 @@ describe('기록과 다시 계산', () => {
   it('한 경기의 기록은 작다', () => {
     const { rec } = playSome()
     expect(JSON.stringify(rec).length).toBeLessThan(6000)
+  })
+})
+
+describe('초크와 미스큐', () => {
+  const spin = (side: number, chalked = false): ShotRecord => ({ player: 0, chalked, input: { ...shot(250, 0.5, side).input!, top: 0 } })
+  const miscued = (id: string, s: ShotRecord, n = 1) => {
+    const rec = newMatch({ ...solo, players: [{ name: '나', target: 999 }] }, id, 0)
+    let st = initialState(rec)
+    let last = false
+    for (let i = 0; i < n; i++) {
+      const r = play(rec, st, s)
+      st = r.state
+      last = r.outcome.result!.events[0].miscue === true
+    }
+    return { last, st, rec }
+  }
+
+  it('확률: 안전한 범위에서는 0, 한계를 넘어가면 커지고, 초크가 없으면 더 일찍 위험해진다', () => {
+    const L = DEFAULT_CUE.miscueLimit
+    expect(miscueChance(L * 0.99, L, 1)).toBe(0)
+    expect(miscueChance(L * 1.14, L, 1)).toBeCloseTo(0.5, 5)
+    expect(miscueChance(L * 1.3, L, 1)).toBe(1)
+    expect(miscueChance(L * 0.9, L, 0)).toBeGreaterThan(0.5)
+    expect(miscueChance(L * 0.8, L, 0)).toBe(0)
+  })
+
+  it('한계 근처에서는 미스큐가 나기도 하고 안 나기도 한다', () => {
+    const side = DEFAULT_CUE.miscueLimit * 1.14
+    let n = 0
+    for (let i = 0; i < 200; i++) if (miscued(`m${i}`, spin(side, true)).last) n++
+    expect(n).toBeGreaterThan(70)
+    expect(n).toBeLessThan(130)
+  })
+
+  it('칠할수록 초크가 닳고, 칠하면 다시 찬다', () => {
+    const a = miscued('w', spin(0.2), 4)
+    expect(a.st.players[0].chalk!).toBeLessThan(0.5)
+    const r = play(a.rec, a.st, spin(0, true))
+    expect(r.state.players[0].chalk!).toBeCloseTo(0.92, 5)
+  })
+
+  it('초크 없이 계속 치면 한계 안쪽 당점에서도 미스큐가 난다', () => {
+    const side = DEFAULT_CUE.miscueLimit * 0.95
+    expect(miscued('x', spin(side, true)).last).toBe(false)
+    const r = miscued('x', spin(side), 6)
+    expect(r.st.players[0].chalk).toBe(0)
+  })
+
+  it('기록에 미스큐 여부를 적어 보내도 무시하고 다시 정한다', () => {
+    const cheat = spin(0.85, true)
+    cheat.input = { ...cheat.input!, miscue: false }
+    expect(miscued('c', cheat).last).toBe(true)
+  })
+
+  it('예전 기록(초크 없음)은 예전 방식으로 다시 계산한다', () => {
+    const rec = newMatch(solo, 'old', 0)
+    delete rec.chalk
+    const r = play(rec, initialState(rec), spin(DEFAULT_CUE.miscueLimit * 1.05, true))
+    expect(r.outcome.result!.events[0].miscue).toBe(true)
+    expect(r.state.players[0].chalk).toBeUndefined()
   })
 })

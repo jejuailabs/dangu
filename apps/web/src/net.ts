@@ -139,11 +139,11 @@ export class Net {
     }
   }
 
-  async shot(input: unknown, stroke: unknown): Promise<void> {
+  async shot(input: unknown, stroke: unknown, chalked = false): Promise<void> {
     if (!this.room) return
     this.busy = true
     try {
-      this.after(await api.roomShot(this.room, input, stroke, this.have))
+      this.after(await api.roomShot(this.room, input, stroke, this.have, chalked))
     } catch (e) {
       this.fail(e)
     } finally {

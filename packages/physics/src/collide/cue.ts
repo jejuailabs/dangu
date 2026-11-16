@@ -47,7 +47,7 @@ function frame(t: TableProfile, shot: ShotInput): Frame {
   let side = shot.side
   let top = shot.top
   let off = Math.sqrt(side * side + top * top)
-  const miscue = off > shot.cue.miscueLimit
+  const miscue = shot.miscue ?? off > shot.cue.miscueLimit
   if (off > MAX_OFFSET) {
     side *= MAX_OFFSET / off
     top *= MAX_OFFSET / off

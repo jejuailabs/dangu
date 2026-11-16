@@ -110,6 +110,9 @@
             <button data-v="top">위<kbd>2</kbd></button>
             <button data-v="free">자유<kbd>3</kbd></button>
           </div>
+          <div class="row"><label for="camLift">높이</label><input id="camLift" type="range" min="-0.25" max="1.8" step="0.01" value="0" /><output id="camLiftO" class="num"></output></div>
+          <div class="row"><label for="camZoom">거리</label><input id="camZoom" type="range" min="0.45" max="2.6" step="0.01" value="1" /><output id="camZoomO" class="num"></output></div>
+          <button class="linkbtn" id="camReset">시점 처음으로 <kbd>0</kbd></button>
         </section>
         <section>
           <h3 class="eyebrow">당점</h3>
@@ -117,6 +120,7 @@
             <div id="tippad"><div id="tipdot"></div></div>
             <div id="tipval"></div>
           </div>
+          <div class="row chalkrow"><label>초크</label><div id="chalkBar"><i id="chalkFill"></i></div><button class="btn yellow mini" id="btnChalk" title="초크를 칠하면 미스큐가 덜 납니다 (C)">칠하기</button></div>
           <div class="row"><label for="theta">큐 고각</label><input id="theta" type="range" min="0" max="85" step="1" value="0" /><output id="thetaO" class="num">0°</output></div>
         </section>
         <section>
@@ -153,6 +157,7 @@
             <button class="btn" id="btnReplay" title="방금 친 샷 다시 보기 (R)">↺ 다시 보기</button>
             <button class="btn" id="btnUndo" title="연습 모드에서 한 샷 되돌리기 (Z)">⤺ 되돌리기</button>
           </div>
+          <button class="linkbtn" id="btnHelp">단축키 보기 <kbd>H</kbd></button>
         </section>
       </div>
 
@@ -278,6 +283,15 @@
           <button class="btn" id="pauseRestart">처음부터 다시</button>
           <button class="btn" id="pauseMenu">메뉴로 나가기</button>
         </div>
+      </div>
+    </div>
+
+    <div id="help" class="overlay hide">
+      <div class="sheet glass helpsheet">
+        <div class="eyebrow">단축키</div>
+        <h2>키보드로 조작하기</h2>
+        <div id="helpList"></div>
+        <div class="actions"><button class="btn green" id="helpClose">닫기</button></div>
       </div>
     </div>
 

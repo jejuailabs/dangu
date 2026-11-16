@@ -63,6 +63,8 @@ export interface ShotRecord {
   /** 기권. player 가 기권한 사람이다 (차례와 무관). 온라인에서 나가거나 끊긴 경우 */
   forfeit?: boolean
   stroke?: StrokeMeta
+  /** 이 샷을 치기 전에 초크를 칠했는가 */
+  chalked?: boolean
 }
 
 export interface MatchRecord {
@@ -75,6 +77,8 @@ export interface MatchRecord {
   table: TableProfile
   initialBalls: BallState[]
   shots: ShotRecord[]
+  /** 초크와 확률적 미스큐를 쓰는 기록인가. 없으면 예전 방식(한계를 넘으면 무조건 미스큐)으로 다시 계산한다 */
+  chalk?: boolean
   /** 이 기록을 보는 사람의 자리 (온라인에서 2번 자리였으면 1). 없으면 0 */
   viewSeat?: number
   /** 온라인 대전 기록인가 */
@@ -84,6 +88,39 @@ export interface MatchRecord {
 export interface PlayerState extends ScoreState {
   /** 이닝별 득점 (기록지). inningPoints[k] 는 k+1 번째 이닝 */
   inningPoints: number[]
+  /** 팁에 남은 초크 (0..1). 칠 때마다 닳고, 초크를 칠하면 1 이 된다 */
+  chalk?: number
+}
+
+/**
+ * 미스큐 확률. 당점이 큐의 한계 근처에 들어서면 확률적으로 미스큐가 난다.
+ * 초크가 가득하면 한계까지는 안전하고 한계의 1.28배에서 확실히 미스큐가 난다.
+ * 초크가 없으면 한계의 82% 부터 위험해지고 94% 에서 확실히 미스큐가 난다. [초기값]
+ */
+export function miscueChance(off: number, limit: number, chalk: number): number {
+  const c = Math.min(Math.max(chalk, 0), 1)
+  const safe = limit * (0.82 + 0.18 * c)
+  const width = limit * (0.12 + 0.16 * c)
+  return Math.min(Math.max((off - safe) / width, 0), 1)
+}
+
+/** 샷 한 번에 초크가 닳는 양. 당점이 중심에서 멀수록 많이 닳는다 */
+export function chalkWear(off: number, limit: number): number {
+  return 0.08 + 0.2 * Math.min(off / limit, 1)
+}
+
+/** 미스큐 판정에 쓰는 0..1 의 수. 기록의 id 와 샷 번호로 정해지므로 다시 계산해도 같다 */
+export function miscueRoll(recordId: string, index: number): number {
+  const text = `${recordId}:${index}`
+  let h = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0
+  // 마지막에 한 번 더 섞는다 (샷 번호만 달라도 고르게 퍼지도록)
+  h ^= h >>> 15
+  h = Math.imul(h, 0x2c1b3c6d) >>> 0
+  h ^= h >>> 12
+  h = Math.imul(h, 0x297a2d39) >>> 0
+  h ^= h >>> 15
+  return (h >>> 0) / 4294967296
 }
 
 export interface MatchState {
@@ -120,6 +157,7 @@ export function newMatch(config: MatchConfig, id: string, createdAt: number): Ma
     id,
     createdAt,
     coreVersion: CORE_VERSION,
+    chalk: true,
     config,
     table: { ...tableFor(config.discipline) },
     initialBalls: initialLayout(config.discipline),
@@ -140,6 +178,11 @@ export function initialState(record: MatchRecord): MatchState {
     finished: false,
     winner: -1,
   }
+}
+
+/** 지금 치면 적용될 초크 양 (방금 칠했으면 1) */
+export function chalkOf(state: MatchState, chalked = false): number {
+  return chalked ? 1 : (state.players[state.turn].chalk ?? 1)
 }
 
 const FORFEIT: ShotJudgement = {
@@ -184,10 +227,19 @@ export function step(record: MatchRecord, state: MatchState, shot: ShotRecord, i
   let result: ShotResult | undefined
   let judgement: ShotJudgement
   let balls = before
+  let chalkAfter = chalkOf(state, shot.chalked)
   if (shot.timeout || !shot.input) {
     judgement = TIMEOUT
   } else {
-    result = simulate(table, before, { ...shot.input, ballId: cueIdOf(p) })
+    // 미스큐 여부는 여기서 정한다 (기록에 들어 있는 값은 믿지 않는다)
+    let miscue: boolean | undefined
+    if (record.chalk) {
+      const off = Math.hypot(shot.input.side, shot.input.top)
+      const limit = shot.input.cue.miscueLimit
+      miscue = miscueRoll(record.id, index) < miscueChance(off, limit, chalkOf(state, shot.chalked))
+      chalkAfter = miscue ? 0 : Math.max(0, chalkOf(state, shot.chalked) - chalkWear(off, limit))
+    }
+    result = simulate(table, before, { ...shot.input, ballId: cueIdOf(p), miscue })
     judgement = judge(config.discipline, result, cueIdOf(p), config.rules, me.finishing)
     balls = respot(config.discipline, result.final.map(cloneBall))
   }
@@ -195,6 +247,7 @@ export function step(record: MatchRecord, state: MatchState, shot: ShotRecord, i
   const players = state.players.map((x) => ({ ...x, inningPoints: [...x.inningPoints] }))
   const scoreBefore = me.score
   const next: PlayerState = { ...players[p], ...applyJudgement(me, judgement, config.rules, false) }
+  if (record.chalk) next.chalk = chalkAfter
   // 기록지: 이번 이닝 칸에 점수 변화를 더한다
   next.inningPoints[inning - 1] = (next.inningPoints[inning - 1] ?? 0) + (next.score - scoreBefore)
   players[p] = next

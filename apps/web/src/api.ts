@@ -72,6 +72,6 @@ export const api = {
   roomCreate: (o: { discipline: string; target: number; shotClock: number }) => call<RoomView>('POST', '/room/create', o),
   roomJoin: (code: string, target?: number) => call<RoomView>('POST', '/room/join', { code, target }),
   roomState: (code: string, have: number, beat: boolean) => call<RoomView>('GET', `/room?code=${encodeURIComponent(code)}&have=${have}&beat=${beat ? 1 : 0}`),
-  roomShot: (code: string, input: unknown, stroke: unknown, have: number) => call<RoomView>('POST', '/room/shot', { code, input, stroke, have }),
+  roomShot: (code: string, input: unknown, stroke: unknown, have: number, chalked = false) => call<RoomView>('POST', '/room/shot', { code, input, stroke, have, chalked }),
   roomLeave: (code: string) => call<{ ok: boolean }>('POST', '/room/leave', { code }),
 }
