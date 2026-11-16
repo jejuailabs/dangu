@@ -77,7 +77,7 @@
 ```bash
 pnpm install
 pnpm dev                           # 게임 (http://localhost:5181)
-pnpm test                          # 전체 테스트 (166개)
+pnpm test                          # 전체 테스트 (157개)
 pnpm e2e                           # 온라인 대전 자동 점검 (임시 서버와 두 브라우저로 실제 대전)
 pnpm viewer                        # 2D 물리 디버그 뷰어 (http://localhost:5180)
 pnpm crossbrowser                  # 뷰어가 떠 있을 때: Chromium·Firefox·WebKit 해시 비교

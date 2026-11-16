@@ -39,7 +39,7 @@ async function waitFor(url, ms = 60000) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const state = (page) => page.evaluate(() => window.__game.state())
-const until = (page, fn, arg, ms = 15000) => page.waitForFunction(fn, arg, { timeout: ms }).then(() => true).catch(() => false)
+const until = (page, fn, arg, ms = 40000) => page.waitForFunction(fn, arg, { timeout: ms }).then(() => true).catch(() => false)
 
 let browser
 try {
@@ -70,9 +70,9 @@ try {
     await page.evaluate((n) => sessionStorage.setItem('dangu.devuser', n), name)
     await page.goto(url, { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => window.__game !== undefined, null, { timeout: 60000 })
-    return until(page, (n) => window.__game.state().account === n, name, 20000)
+    return until(page, (n) => window.__game.state().account === n, name, 40000)
   }
-  check('두 사람 로그인', (await open(A, 'e2e_alice', BASE)) && true)
+  check('두 사람 로그인', (await open(A, 'e2e_alice', `${BASE}/?norender=1`)) && true)
 
   // A: 방 만들기
   await A.click('.mode-card[data-mode="online"]')
@@ -83,7 +83,7 @@ try {
   check('방 코드 발급', /^[A-Z2-9]{5}$/.test(code ?? ''), code ?? '')
 
   // B: 초대 링크로 참가
-  const loggedB = await open(B, 'e2e_bob', `${BASE}/?room=${code}`)
+  const loggedB = await open(B, 'e2e_bob', `${BASE}/?norender=1&room=${code}`)
   const okA = await until(A, () => window.__game.state().kind === 'online' && window.__game.state().phase !== 'menu')
   const okB = await until(B, () => window.__game.state().kind === 'online' && window.__game.state().phase !== 'menu')
   const sa = await state(A)
@@ -109,8 +109,8 @@ try {
     const other = pages[1 - turn]
     await until(me, () => window.__game.state().phase === 'aim')
     await me.evaluate((phi) => window.__game.shoot({ phi, speed: 2.5 + (phi % 1), side: 0.1, top: 0.1 }), angles[i])
-    await me.waitForFunction((n) => window.__game.state().shots === n, i + 1, { timeout: 10000 })
-    await other.waitForFunction((n) => window.__game.state().shots === n, i + 1, { timeout: 10000 })
+    await me.waitForFunction((n) => window.__game.state().shots === n, i + 1, { timeout: 40000 })
+    await other.waitForFunction((n) => window.__game.state().shots === n, i + 1, { timeout: 40000 })
     // 공이 구르는 애니메이션은 건너뛴다
     await me.evaluate(() => window.__game.skip())
     await other.evaluate(() => window.__game.skip())
@@ -126,8 +126,8 @@ try {
   const cheater = pages[turn]
   await until(cheater, () => window.__game.state().phase === 'aim')
   await cheater.evaluate(() => window.__game.shoot({ phi: 0.9, speed: 999, cue: { mass: 5, tipRestitution: 5, endMass: 0.001, contactTime: 0.001, miscueLimit: 5 } }))
-  await A.waitForFunction(() => window.__game.state().shots === 7, null, { timeout: 10000 })
-  await B.waitForFunction(() => window.__game.state().shots === 7, null, { timeout: 10000 })
+  await A.waitForFunction(() => window.__game.state().shots === 7, null, { timeout: 40000 })
+  await B.waitForFunction(() => window.__game.state().shots === 7, null, { timeout: 40000 })
   const lastSpeed = await A.evaluate(() => window.__game.lastInput().speed)
   check('속인 속도와 큐는 서버가 한계 안으로 고정', lastSpeed <= 5.0001, `속도 ${lastSpeed}`)
   await A.evaluate(() => window.__game.skip())

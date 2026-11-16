@@ -1816,6 +1816,8 @@ window.addEventListener('keyup', (ev) => {
 window.addEventListener('resize', layout)
 
 // ── 매 프레임 ─────────────────────────────────────────
+/** 자동 점검용: 주소에 norender 가 있으면 3D 화면을 그리지 않는다 (점검용 브라우저는 그래픽 가속이 없어 매우 느리다) */
+const NO_RENDER = new URLSearchParams(location.search).has('norender')
 let lastFrame = performance.now()
 function speedBefore(t: TableProfile, res: ShotResult, time: number, ids: number[]): number {
   const st = stateAt(t, res, Math.max(time - 1e-6, 0))
@@ -1877,7 +1879,7 @@ function frame(now: number): void {
     clockLeft = Math.max(0, (netDeadline - (Date.now() + netOffset)) / 1000)
     renderClock()
   }
-  scene.render(dt)
+  if (!NO_RENDER) scene.render(dt)
   requestAnimationFrame(frame)
 }
 
