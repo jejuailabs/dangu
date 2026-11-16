@@ -1,9 +1,16 @@
 /**
- * 온라인 대전의 서버 연결 (웹소켓).
- * 끊기면 방 코드를 기억해 두었다가 자동으로 다시 들어간다 (서버는 60초 기다려 준다).
+ * 온라인 대전의 서버 연결.
+ *
+ * 서버 함수는 연결을 계속 붙들고 있을 수 없어서 웹소켓 대신 "주기적으로 물어보기" 를 쓴다.
+ * 당구는 번갈아 치는 경기라 1초 안팎의 지연은 문제가 되지 않는다.
+ * - 0.9초마다 방의 새 샷을 물어본다 (공이 구르는 중에는 물어보지 않는다)
+ * - 8초마다 "나 아직 있다" 를 함께 알린다. 60초 동안 알리지 않으면 서버가 기권으로 처리한다
+ *
+ * 화면 쪽은 메시지 형태로 받는다: room(방 상태), shot(확정된 샷), presence, over, check, error.
  */
 import type { MatchConfig, MatchRecord, ShotRecord } from '../../../packages/game/src'
 import type { Profile } from '../../../packages/game/src/progress'
+import { type ApiFailure, type RoomView, api } from './api'
 
 export type ServerMsg =
   | {
@@ -17,86 +24,144 @@ export type ServerMsg =
       deadline: number
       serverNow: number
     }
-  | { t: 'shot'; index: number; shot: ShotRecord; hash: string; deadline: number; serverNow: number }
-  | { t: 'aim'; phi: number; theta: number; side: number; top: number }
+  | { t: 'shot'; index: number; shot: ShotRecord; deadline: number; serverNow: number }
   | { t: 'presence'; seat: number; connected: boolean }
   | { t: 'over'; profile: Profile | null }
+  /** 서버가 계산한 상태의 지문. total 개의 샷을 적용한 내 상태와 비교한다 */
+  | { t: 'check'; total: number; sig: string }
   | { t: 'error'; message: string }
-  | { t: 'left' }
+
+const POLL_MS = 900
+const BEAT_MS = 8000
 
 export class Net {
-  private ws: WebSocket | null = null
-  private queue: string[] = []
-  private retry = 0
-  private timer = 0
-  /** 지금 들어가 있는 방. 다시 연결되면 이 방으로 돌아간다 */
+  /** 지금 들어가 있는 방 */
   room = ''
-  /** 일부러 끊은 경우 다시 연결하지 않는다 */
-  private wanted = false
+  /** 서버에서 받아 화면에 넘긴 샷의 수 */
+  private have = 0
+  private status: 'none' | 'waiting' | 'playing' | 'over' = 'none'
+  private timer = 0
+  private busy = false
+  private lastBeat = 0
+  private fails = 0
+  private seats: boolean[] = []
+  private overSent = false
+  /** 공이 구르는 중처럼 새 샷을 받을 필요가 없을 때 true 를 돌려주는 함수 */
+  paused: () => boolean = () => false
 
   constructor(
     private onMessage: (m: ServerMsg) => void,
     private onState: (connected: boolean) => void,
   ) {}
 
-  get connected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN
+  private start(): void {
+    window.clearInterval(this.timer)
+    this.timer = window.setInterval(() => void this.poll(), POLL_MS)
   }
 
-  connect(): void {
-    this.wanted = true
-    if (this.ws && this.ws.readyState <= WebSocket.OPEN) return
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/ws`)
-    this.ws = ws
-    ws.onopen = () => {
-      this.retry = 0
-      this.onState(true)
-      // 끊겼다가 돌아온 경우 방으로 복귀
-      if (this.room) ws.send(JSON.stringify({ t: 'join', code: this.room }))
-      for (const m of this.queue) ws.send(m)
-      this.queue = []
-    }
-    ws.onmessage = (e) => {
-      try {
-        this.onMessage(JSON.parse(String(e.data)) as ServerMsg)
-      } catch {
-        /* 알 수 없는 메시지는 버린다 */
-      }
-    }
-    ws.onclose = () => {
-      if (this.ws !== ws) return
-      this.ws = null
-      this.onState(false)
-      if (!this.wanted) return
-      // 점점 길게 기다리며 다시 시도한다 (최대 5초)
-      this.retry++
-      window.clearTimeout(this.timer)
-      this.timer = window.setTimeout(() => this.connect(), Math.min(500 * this.retry, 5000))
-    }
+  private enter(v: RoomView): void {
+    this.room = v.code
+    this.status = v.status
+    this.have = v.record ? v.record.shots.length : 0
+    this.seats = v.seats.map((s) => s.connected)
+    this.overSent = false
+    this.fails = 0
+    this.lastBeat = Date.now()
+    this.onMessage({ t: 'room', code: v.code, you: v.you, status: v.status, config: v.config, record: v.record, seats: v.seats, deadline: v.deadline, serverNow: v.serverNow })
+    this.after(v)
+    this.start()
   }
 
-  send(msg: Record<string, unknown>): void {
-    const text = JSON.stringify(msg)
-    if (this.connected) this.ws!.send(text)
-    else {
-      // 조준 같은 일시적인 것은 쌓아 두지 않는다
-      if (msg.t !== 'aim') this.queue.push(text)
-      this.connect()
+  /** 서버 응답에서 새 샷, 접속 상태, 종료를 화면에 알린다. */
+  private after(v: RoomView): void {
+    v.shots.forEach((shot, i) => {
+      const index = v.from + i
+      if (index < this.have) return
+      this.have = index + 1
+      this.onMessage({ t: 'shot', index, shot, deadline: v.deadline, serverNow: v.serverNow })
+    })
+    v.seats.forEach((s, i) => {
+      if (this.seats[i] !== undefined && this.seats[i] !== s.connected) this.onMessage({ t: 'presence', seat: i, connected: s.connected })
+    })
+    this.seats = v.seats.map((s) => s.connected)
+    this.status = v.status
+    if (v.status !== 'waiting') this.onMessage({ t: 'check', total: v.total, sig: v.sig })
+    if (v.status === 'over' && !this.overSent && (v.profile || v.you < 0)) {
+      this.overSent = true
+      this.onMessage({ t: 'over', profile: v.profile })
     }
   }
 
-  /** 연결만 끊는다 (점검용). 방은 기억하고 있으므로 곧 다시 들어간다 */
-  drop(): void {
-    this.ws?.close()
+  private fail(e: unknown): void {
+    const err = e as ApiFailure
+    this.onMessage({ t: 'error', message: err.message || '서버 오류' })
+  }
+
+  private async poll(): Promise<void> {
+    if (!this.room || this.busy || this.paused()) return
+    if (this.status === 'over' && this.overSent) return
+    this.busy = true
+    try {
+      const beat = Date.now() - this.lastBeat > BEAT_MS
+      // 상대를 기다리는 동안에는 전체 기록을 받는다 (경기가 시작되는 순간 필요하다)
+      const waiting = this.status === 'waiting'
+      const v = await api.roomState(this.room, waiting ? -1 : this.have, beat)
+      if (beat) this.lastBeat = Date.now()
+      if (this.fails >= 3) this.onState(true)
+      this.fails = 0
+      if (waiting && v.status !== 'waiting') this.enter(v)
+      else this.after(v)
+    } catch (e) {
+      const err = e as ApiFailure
+      if (err.status === 404) {
+        this.fail(e)
+        this.close()
+      } else if (++this.fails === 3) this.onState(false)
+    } finally {
+      this.busy = false
+    }
+  }
+
+  /** 방으로 들어가(또는 다시 들어가) 서버의 전체 기록을 받는다. */
+  async join(code: string, target?: number): Promise<void> {
+    try {
+      this.enter(await api.roomJoin(code, target))
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
+  async create(o: { discipline: string; target: number; shotClock: number }): Promise<void> {
+    try {
+      this.enter(await api.roomCreate(o))
+    } catch (e) {
+      this.fail(e)
+    }
+  }
+
+  async shot(input: unknown, stroke: unknown): Promise<void> {
+    if (!this.room) return
+    this.busy = true
+    try {
+      this.after(await api.roomShot(this.room, input, stroke, this.have))
+    } catch (e) {
+      this.fail(e)
+    } finally {
+      this.busy = false
+    }
+  }
+
+  /** 방에서 나간다 (경기 중이면 기권). */
+  leave(): void {
+    const code = this.room
+    this.close()
+    if (code) void api.roomLeave(code).catch(() => undefined)
   }
 
   close(): void {
-    this.wanted = false
+    window.clearInterval(this.timer)
     this.room = ''
-    this.queue = []
-    window.clearTimeout(this.timer)
-    this.ws?.close()
-    this.ws = null
+    this.status = 'none'
+    this.have = 0
   }
 }

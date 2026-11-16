@@ -268,6 +268,22 @@ export function summarize(record: MatchRecord, state: MatchState): PlayerSummary
   }))
 }
 
+/**
+ * 경기 상태의 지문. 온라인 대전에서 내 계산과 서버의 계산이 같은지 비교하는 데 쓴다.
+ * 공의 위치와 점수·차례를 비트 단위로 담으므로, 물리 결과가 조금이라도 다르면 달라진다.
+ */
+export function stateSig(state: MatchState): string {
+  const text = JSON.stringify([state.balls.map((b) => [b.id, b.r, b.s]), state.players.map((p) => [p.score, p.innings]), state.turn, state.finished, state.winner])
+  let h1 = 0x811c9dc5
+  let h2 = 0x9747b28c
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0
+    h2 = Math.imul(h2 ^ c, 0x01000197) >>> 0
+  }
+  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')
+}
+
 /** 종목 이름 */
 export function disciplineName(d: Discipline): string {
   return d === '3cushion' ? '3쿠션' : '4구'

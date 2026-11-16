@@ -2,6 +2,5 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "pnpm install",
-  "buildCommand": "pnpm exec vite build apps/web --outDir ../../dist/web --emptyOutDir",
-  "outputDirectory": "dist/web"
+  "buildCommand": "node tools/build-vercel.mjs"
 }

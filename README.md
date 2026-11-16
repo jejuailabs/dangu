@@ -9,7 +9,7 @@
 ```bash
 pnpm install
 pnpm dev        # 게임 (http://localhost:5181)
-pnpm server     # 계정·온라인 대전 서버 (http://localhost:5182)
+pnpm api        # API 서버 (http://localhost:5182, Firestore 사용)
 pnpm test       # 테스트
 pnpm e2e        # 온라인 대전 자동 점검
 ```

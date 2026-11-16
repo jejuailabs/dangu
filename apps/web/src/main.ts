@@ -29,6 +29,7 @@ import {
   newMatch,
   play,
   rebuild,
+  stateSig,
   summarize,
 } from '../../../packages/game/src'
 import {
@@ -55,6 +56,7 @@ import '@fontsource/jua/400.css'
 import '@fontsource/lilita-one/400.css'
 import { careerStats, trendLine } from '../../../packages/game/src/stats'
 import { type Account, api } from './api'
+import { DEV_AUTH, onUser, signInDev, signInGoogle, signOutUser } from './auth'
 import { Net, type ServerMsg } from './net'
 import './style.css'
 
@@ -496,13 +498,14 @@ let netDeadline = 0
 let netOffset = 0
 let netProfile: Profile | null = null
 let netQueue: Extract<ServerMsg, { t: 'shot' }>[] = []
-let lastAimSent = 0
 let afterLogin: (() => void) | null = null
 const isMyTurn = () => !!session && (session.kind !== 'online' || session.seat === session.state.turn)
 
 const net = new Net(onNet, (connected) => {
   show('netbar', !connected && session?.kind === 'online' && phase !== 'over')
 })
+// 공이 구르는 동안에는 서버에 새 샷을 물어보지 않는다
+net.paused = () => phase === 'run'
 
 function setThinking(text: string | null): void {
   show('thinking', text !== null)
@@ -512,8 +515,8 @@ function setThinking(text: string | null): void {
 function createRoom(discipline: Discipline, target: number, shotClock: number): void {
   if (!account) return
   netProfile = null
-  net.connect()
-  net.send({ t: 'create', discipline, target, shotClock })
+  $('lobbyMsg').textContent = ''
+  void net.create({ discipline, target, shotClock })
 }
 
 function joinRoom(code: string): void {
@@ -526,13 +529,11 @@ function joinRoom(code: string): void {
     return
   }
   netProfile = null
-  net.connect()
-  net.send({ t: 'join', code: c, target: Number($<HTMLSelectElement>('p0target').value) || undefined })
+  void net.join(c, Number($<HTMLSelectElement>('p0target').value) || undefined)
 }
 
 function leaveOnline(): void {
-  net.send({ t: 'leave' })
-  window.setTimeout(() => net.close(), 150)
+  net.leave()
   netQueue = []
   netDeadline = 0
   show('lobby', false)
@@ -570,7 +571,7 @@ function drainNet(): void {
     if (m.index > have) {
       // 중간 샷을 놓쳤다. 서버의 기록을 통째로 다시 받는다
       netQueue = []
-      net.send({ t: 'join', code: net.room })
+      void net.join(net.room)
       return
     }
     netQueue.shift()
@@ -580,11 +581,6 @@ function drainNet(): void {
     setThinking(null)
     if (m.shot.input) {
       commitShot(m.shot)
-      // 내 계산과 서버의 계산이 다르면 서버 것으로 맞춘다
-      if (pending?.outcome.result?.hash !== m.hash) {
-        pending = null
-        net.send({ t: 'join', code: net.room })
-      }
       return
     }
     // 시간 초과나 기권: 공은 움직이지 않는다
@@ -609,7 +605,6 @@ function drainNet(): void {
 function onNet(m: ServerMsg): void {
   switch (m.t) {
     case 'room': {
-      net.room = m.code
       netDeadline = m.deadline
       netOffset = m.serverNow - Date.now()
       if (m.status === 'waiting') {
@@ -634,11 +629,10 @@ function onNet(m: ServerMsg): void {
       netQueue.push(m)
       drainNet()
       return
-    case 'aim':
-      if (session?.kind === 'online' && phase === 'think' && !isMyTurn()) {
-        const c = cueBall()
-        scene.setCue(true, c, m.phi, m.theta, m.side, m.top, stroke.startGap)
-        if (session.seat === -1 || scene.view === 'aim') scene.aimCamera(c, m.phi, m.theta)
+    case 'check':
+      // 서버가 계산한 상태와 내 계산이 다르면 서버의 기록으로 다시 맞춘다
+      if (session?.kind === 'online' && phase !== 'run' && netQueue.length === 0 && session.record.shots.length === m.total && stateSig(session.state) !== m.sig) {
+        void net.join(net.room)
       }
       return
     case 'presence':
@@ -662,7 +656,7 @@ function onNet(m: ServerMsg): void {
           phase = 'aim'
           nextTurn()
         }
-      } else alert(m.message)
+      } else if (!$('setup').classList.contains('hide') || phase === 'menu') alert(m.message)
       return
     default:
       return
@@ -700,7 +694,7 @@ function fire(shot: ShotInput, analysis: StrokeAnalysis | null): void {
     phase = 'think'
     setThinking('보내는 중')
     scene.setPrediction([])
-    net.send({ t: 'shot', input: shot, stroke: meta })
+    void net.shot(shot, meta)
     updateKeys()
     return
   }
@@ -856,14 +850,6 @@ function refreshAim(): void {
   scene.aimCamera(c, phi, th)
   scene.setAimLine(assist !== 'none', c, phi)
   if (phase === 'aim') scene.setPrediction(predictionPaths())
-  if (session.kind === 'online') {
-    // 내가 겨누는 모습을 상대에게 보낸다 (1초에 10번까지)
-    const now = performance.now()
-    if (now - lastAimSent > 100) {
-      lastAimSent = now
-      net.send({ t: 'aim', phi, theta: th, side, top })
-    }
-  }
   const want = Math.min(thetaUser, cueItem().maxElevation)
   const raised = th > want * DEG + 1e-6
   $('thetaO').textContent = raised ? `${Math.round(th / DEG)}°↑` : `${want}°`
@@ -1399,34 +1385,54 @@ function setAccount(a: Account | null, p?: Profile): void {
   if (session) applyCue()
 }
 
-let acctMode: 'login' | 'signup' = 'login'
 function openAccount(): void {
+  $('acctMsg').className = ''
   $('acctMsg').textContent = ''
-  $<HTMLInputElement>('acctPass').value = ''
+  show('devLogin', DEV_AUTH)
+  $('acctSubmit').textContent = DEV_AUTH ? '들어가기' : '구글로 로그인'
   show('account', true)
-  $<HTMLInputElement>('acctName').focus()
 }
-onSeg('segAcct', (v) => {
-  acctMode = v as 'login' | 'signup'
-  $('acctTitle').textContent = v === 'login' ? '로그인' : '새로 가입'
-  $('acctSubmit').textContent = v === 'login' ? '로그인' : '가입하고 시작'
-  $<HTMLInputElement>('acctPass').autocomplete = v === 'login' ? 'current-password' : 'new-password'
-  $('acctMsg').textContent = ''
-})
 $('acctClose').addEventListener('click', () => show('account', false))
-$('acctForm').addEventListener('submit', (e) => {
-  e.preventDefault()
-  const name = $<HTMLInputElement>('acctName').value.trim()
-  const pass = $<HTMLInputElement>('acctPass').value
+$('acctSubmit').addEventListener('click', () => {
   const msg = $('acctMsg')
   msg.className = ''
-  msg.textContent = '확인하는 중…'
-  const req = acctMode === 'login' ? api.login(name, pass) : api.signup(name, pass)
-  void req
+  msg.textContent = '로그인하는 중…'
+  const done = DEV_AUTH
+    ? Promise.resolve().then(() => {
+        signInDev($<HTMLInputElement>('acctName').value.trim())
+        return refreshAccount()
+      })
+    : signInGoogle() // 로그인이 되면 onUser 가 불려 refreshAccount 가 실행된다
+  void done
+    .then(() => {
+      if (DEV_AUTH) show('account', false)
+    })
+    .catch((err: Error) => {
+      msg.textContent = err.message
+    })
+})
+$('profile').addEventListener('click', (e) => {
+  if (!(e.target as HTMLElement).closest('#acctBtn')) return
+  if (!account) return openAccount()
+  if (session?.kind === 'online') return
+  void signOutUser()
+    .catch(() => undefined)
+    .then(() => setAccount(null))
+})
+
+/** 서버에 내가 누구인지 묻고 프로필과 기록을 맞춘다. 로그인 직후와 접속했을 때 부른다. */
+let refreshing: Promise<void> | null = null
+function refreshAccount(): Promise<void> {
+  refreshing ??= api
+    .me()
     .then(async (r) => {
+      if (!r.account || !r.profile) {
+        setAccount(null)
+        return
+      }
       setAccount(r.account, r.profile)
-      msg.className = 'ok'
-      msg.textContent = '기록을 맞추는 중…'
+      $('acctMsg').className = 'ok'
+      $('acctMsg').textContent = '기록을 맞추는 중…'
       await syncAfterLogin()
       show('account', false)
       const next = afterLogin
@@ -1434,33 +1440,27 @@ $('acctForm').addEventListener('submit', (e) => {
       next?.()
     })
     .catch((err: Error) => {
-      msg.className = ''
-      msg.textContent = err.message
+      // 서버에 닿지 않으면 손님으로 둔다
+      $('acctMsg').className = ''
+      $('acctMsg').textContent = err.message
     })
-})
-$('profile').addEventListener('click', (e) => {
-  if (!(e.target as HTMLElement).closest('#acctBtn')) return
-  if (!account) return openAccount()
-  void api
-    .logout()
-    .catch(() => undefined)
-    .then(() => setAccount(null))
-})
-// 접속했을 때 이미 로그인되어 있으면 이어 간다. 서버가 없으면 손님으로 둔다.
-void api
-  .me()
-  .then((r) => {
-    if (r.account && r.profile) {
-      setAccount(r.account, r.profile)
-      void syncAfterLogin()
-    }
-  })
-  .catch(() => undefined)
-  .then(() => {
-    // 초대 링크(?room=코드)로 들어왔으면 바로 그 방으로 간다
+    .finally(() => {
+      refreshing = null
+    })
+  return refreshing
+}
+
+// 접속했을 때 이미 로그인되어 있으면 이어 간다. 초대 링크(?room=코드)로 왔으면 그 방으로 간다.
+let firstAuth = true
+onUser((signedIn) => {
+  const p = signedIn ? refreshAccount() : Promise.resolve(setAccount(null))
+  if (!firstAuth) return
+  firstAuth = false
+  void p.then(() => {
     const code = new URLSearchParams(location.search).get('room')
     if (code) joinRoom(code)
   })
+})
 
 // ── 조작 연결 ─────────────────────────────────────────
 function setSeg(id: string, value: string): void {
@@ -1890,6 +1890,7 @@ Object.assign(window, {
       seat: session?.seat,
       room: net.room,
       account: account?.name,
+      sig: session ? stateSig(session.state) : '',
       turn: session?.state.turn,
       players: session?.state.players,
       balls: session?.state.balls,
@@ -1926,7 +1927,7 @@ Object.assign(window, {
       if (session) applyCue()
     },
     menu: showMenu,
-    dropNet: () => net.drop(),
+    rejoin: () => net.join(net.room),
     lastInput: () => session?.record.shots[session.record.shots.length - 1]?.input,
   },
 })
