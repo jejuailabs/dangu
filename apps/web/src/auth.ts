@@ -64,7 +64,9 @@ export async function signInGoogle(): Promise<void> {
     if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') throw new Error('로그인 창을 닫았습니다')
     if (code === 'auth/popup-blocked') throw new Error('브라우저가 로그인 창을 막았습니다. 팝업을 허용해 주세요')
     if (code === 'auth/unauthorized-domain') throw new Error('이 주소는 Firebase 에 로그인 허용 도메인으로 등록되어 있지 않습니다')
-    throw new Error(`로그인하지 못했습니다 (${code || '알 수 없는 오류'})`)
+    if (code === 'auth/operation-not-supported-in-this-environment') throw new Error('이 브라우저에서는 로그인 창을 열 수 없습니다. 크롬 같은 일반 브라우저에서 열어 주세요')
+    // 원인을 알 수 있게 실제 오류 내용을 함께 보여 준다
+    throw new Error(`로그인하지 못했습니다 (${code || (e as Error)?.message || '알 수 없는 오류'})`)
   }
 }
 
