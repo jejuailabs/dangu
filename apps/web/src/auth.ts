@@ -11,16 +11,19 @@ import { type Auth, GoogleAuthProvider, getAuth, onAuthStateChanged, signInWithP
 export const DEV_AUTH = import.meta.env.VITE_DEV_AUTH === '1'
 const DEV_KEY = 'dangu.devuser'
 
+/** 환경변수 값의 앞뒤 공백과 줄바꿈을 없앤다 (등록할 때 줄바꿈이 붙는 경우가 있다) */
+const clean = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined)
+
 let app: FirebaseApp | null = null
 let auth: Auth | null = null
 
 function firebaseAuth(): Auth {
   if (auth) return auth
   const cfg = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string | undefined,
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
+    apiKey: clean(import.meta.env.VITE_FIREBASE_API_KEY),
+    authDomain: clean(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
+    projectId: clean(import.meta.env.VITE_FIREBASE_PROJECT_ID),
+    appId: clean(import.meta.env.VITE_FIREBASE_APP_ID),
   }
   if (!cfg.apiKey || !cfg.projectId) throw new Error('Firebase 설정이 없습니다 (.env.local 의 VITE_FIREBASE_*)')
   app = initializeApp(cfg)
